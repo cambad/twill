@@ -2,12 +2,14 @@
 
 namespace A17\Twill\Http\Controllers\Admin;
 
+use A17\Twill\Classes\Export\ExportData;
 use A17\Twill\Exceptions\NoCapsuleFoundException;
 use A17\Twill\Facades\TwillBlocks;
 use A17\Twill\Facades\TwillCapsules;
 use A17\Twill\Helpers\FlashLevel;
 use A17\Twill\Models\Behaviors\HasSlug;
 use A17\Twill\Services\Blocks\Block;
+use Illuminate\Contracts\Container\BindingResolutionException;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Http\Request;
 use Illuminate\Support\Arr;
@@ -23,6 +25,7 @@ use Illuminate\Support\Facades\URL;
 use Illuminate\Support\Facades\View;
 use Illuminate\Support\Str;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 
 abstract class ModuleController extends Controller
 {
@@ -92,6 +95,7 @@ abstract class ModuleController extends Controller
         'skipCreateModal' => false,
         // @todo(3.x): Default to true.
         'includeScheduledInList' => false,
+        'export' => true,
     ];
 
     /**
@@ -912,6 +916,19 @@ abstract class ModuleController extends Controller
      */
     public function additionalTableActions()
     {
+        if (array_key_exists($this->moduleName, config('twill.export-data'))) {
+            return [
+                'exportAction' => [ // Action name.
+                    'name' => 'Export Data', // Button action title.
+                    'variant' => 'primary', // Button style variant. Available variants; primary, secondary, action, editor, validate, aslink, aslink-grey, warning, ghost, outline, tertiary
+                    'size' => 'small', // Button size. Available sizes; small
+                    'link' => route("admin.$this->moduleName.export"), // Button action link.
+                    'target' => '', // Leave it blank for self.
+                    'type' => 'a', // Leave it blank for "button".
+                ]
+            ];
+        }
+
         return [];
     }
 
@@ -1288,7 +1305,7 @@ abstract class ModuleController extends Controller
      */
     protected function getIndexUrls($moduleName, $routePrefix)
     {
-        return Collection::make([
+        $indexes = [
             'create',
             'store',
             'publish',
@@ -1301,7 +1318,13 @@ abstract class ModuleController extends Controller
             'feature',
             'bulkFeature',
             'bulkDelete',
-        ])->mapWithKeys(function ($endpoint) {
+        ];
+
+        if (array_key_exists($this->modelName, config('twill.export-data'))) {
+            $indexes[] = 'export';
+        }
+
+        return Collection::make($indexes)->mapWithKeys(function ($endpoint) {
             return [
                 $endpoint . 'Url' => $this->getIndexOption($endpoint) ? moduleRoute(
                     $this->moduleName,
@@ -1344,6 +1367,7 @@ abstract class ModuleController extends Controller
                 'bulkEdit' => 'edit',
                 'editInModal' => 'edit',
                 'skipCreateModal' => 'edit',
+                'export' => 'publish',
             ];
 
             $authorized = array_key_exists($option, $authorizableOptions) ? Auth::guard('twill_users')->user()->can($authorizableOptions[$option]) : true;
@@ -1940,5 +1964,60 @@ abstract class ModuleController extends Controller
         return TwillBlocks::getBlockCollection()->getRepeaters()->mapWithKeys(function (Block $repeater) {
             return [$repeater->name => $repeater->toList()];
         });
+    }
+
+    /**
+     * @return BinaryFileResponse|\Illuminate\Http\Response
+     * @throws BindingResolutionException
+     */
+    public function export()
+    {
+        $dataTranslated = [];
+        $moduleName = $this->moduleName;
+        $modelName = $this->modelName;
+        $availableFields = [];
+
+        if (! empty(config('twill.export-data.' . $moduleName))) {
+            $availableFields = array_merge(['id'], config('twill.export-data.' . $moduleName));
+        }
+
+        // Get model path with twill namespace config
+        //@todo Do we assuming that the dev will have a Models folder ?
+        $modelPath = $this->namespace . "\Models\\$modelName";
+
+        // Abort process if model is not found.
+        if (! class_exists($modelPath)) {
+            // @todo change the message if error (not found).
+            $this->respondWithError('Model not found');
+        }
+
+        // Instance of model
+        $model = app()->make($modelPath);
+
+        // Get default Locale app.config.
+        $defaultLocale = app()->getLocale();
+
+        // For each language, get data translated to array and push it inside the dataTranslated array.
+        foreach (getLocales() as $locale) {
+            app()->setLocale($locale);
+            $dataTranslated[$locale] = $model->translatedIn($locale)->get()->toArray();
+        }
+
+        // Restrict fields to available fields and push it back to dataTranslated array. Remove the translations array from item.
+        foreach ($dataTranslated as $locale => $translatedArray) {
+            foreach ($translatedArray as $index => $item) {
+                $collect = collect($item);
+                $collectItem = ! empty($availableFields) ? $collect->only($availableFields) : $collect;
+                $dataTranslated[$locale][$index] = $collectItem->filter(function ($item) {
+                    return !is_array($item);
+                })->toArray();
+            }
+        }
+
+        // Set back default locale.
+        app()->setLocale($defaultLocale);
+
+        return (new ExportData($dataTranslated))
+            ->download('twill_' . $moduleName . '.xlsx');
     }
 }

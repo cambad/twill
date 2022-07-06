@@ -232,6 +232,7 @@ class TwillServiceProvider extends ServiceProvider
         $this->mergeConfigFrom(__DIR__ . '/../config/dashboard.php', 'twill.dashboard');
         $this->mergeConfigFrom(__DIR__ . '/../config/oauth.php', 'twill.oauth');
         $this->mergeConfigFrom(__DIR__ . '/../config/disks.php', 'filesystems.disks');
+        $this->mergeConfigFrom(__DIR__ . '/../config/export-data.php', 'twill.export-data');
 
         if (config('twill.media_library.endpoint_type') === 'local'
             && config('twill.media_library.disk') === 'twill_media_library') {

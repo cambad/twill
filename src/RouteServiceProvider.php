@@ -271,6 +271,10 @@ class RouteServiceProvider extends ServiceProvider
                 'duplicate',
             ];
 
+            if (config('twill.enabled.export-data')) {
+                $customRoutes[] = 'export';
+            }
+
             if (isset($options['only'])) {
                 $customRoutes = array_intersect(
                     $defaults,
@@ -305,7 +309,7 @@ class RouteServiceProvider extends ServiceProvider
                     'uses' => "{$className}Controller@{$route}",
                 ];
 
-                if (in_array($route, ['browser', 'tags'])) {
+                if (in_array($route, ['browser', 'tags', 'export'])) {
                     Route::get($routeSlug, $mapping);
                 }
 
